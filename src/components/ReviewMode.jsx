@@ -14,7 +14,7 @@ import EditNoteIcon from '@mui/icons-material/EditNote'
 import MenuBookIcon from '@mui/icons-material/MenuBook'
 import BookmarkIcon from '@mui/icons-material/Bookmark'
 import MenuItem from '@mui/material/MenuItem'
-import FlashcardMode from './FlashCardMode'
+import FlashCardMode from './FlashCardMode'
 import ConjugationDrill from './ConjugationDrill'
 import MultipleChoice from './MultipleChoice'
 import ReadingMode from './ReadingMode'
@@ -22,7 +22,7 @@ import { supabase } from '../supabaseClient'
 import { getSavedWordIds } from '../utils/savedWordsUtils'
 
 const MODES = [
-  { id: 'flashcard', label: 'Flashcard', icon: <StyleIcon />, description: 'JP → EN flip cards', available: true },
+  { id: 'flashcard', label: 'flashCard', icon: <StyleIcon />, description: 'JP → EN flip cards', available: true },
   { id: 'conjugation', label: 'Conjugation', icon: <FitnessCenterIcon />, description: 'Test verb conjugations', available: true },
   { id: 'multiple', label: 'Multiple Choice', icon: <QuizIcon />, description: 'Pick the correct answer', available: true },
   { id: 'reading', label: '読解', icon: <MenuBookIcon />, description: 'Reading comprehension', available: true },
@@ -168,7 +168,7 @@ function ReviewMode({ userId = null }) {
     || (selectedMode === 'conjugation' && selectedForms.length === 0)
     || (savedOnly && savedCount === 0)
 
-  if (started && selectedMode === 'flashcard') return <FlashcardMode activeFilter={activeFilter} cardCount={cardCount} onBack={handleBack} userId={userId} />
+  if (started && selectedMode === 'flashcard') return <FlashCardMode activeFilter={activeFilter} cardCount={cardCount} onBack={handleBack} userId={userId} />
   if (started && selectedMode === 'conjugation') return <ConjugationDrill activeFilter={activeFilter} cardCount={cardCount} selectedForms={selectedForms} onBack={handleBack} />
   if (started && selectedMode === 'multiple') return <MultipleChoice activeFilter={activeFilter} cardCount={cardCount} onBack={handleBack} userId={userId} />
   if (started && selectedMode === 'reading') return <ReadingMode activeFilter={activeFilter} onBack={handleBack} />
