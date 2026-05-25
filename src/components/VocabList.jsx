@@ -3,7 +3,7 @@ import { supabase } from '../supabaseClient'
 import {
   Box, Card, CardContent, Typography, Chip, CircularProgress,
   TextField, MenuItem, Button, IconButton, Divider, Grid,
-  Pagination, InputAdornment, Tooltip, Autocomplete,
+  Pagination, InputAdornment, Tooltip,
   Checkbox, ListItemText, Select, FormControl, InputLabel, OutlinedInput,
   useMediaQuery, useTheme
 } from '@mui/material'
@@ -32,6 +32,10 @@ function speak(text) {
 function VocabList({ isAdmin, userId = null }) {
   const theme = useTheme()
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'))
+  const isDark = theme.palette.mode === 'dark'
+
+  const subduedBg = isDark ? '#2a2a2a' : '#f8fafc'
+  const exampleBg = isDark ? '#2a2a2a' : '#f8fafc'
 
   const [vocab, setVocab] = useState([])
   const [loading, setLoading] = useState(true)
@@ -44,15 +48,16 @@ function VocabList({ isAdmin, userId = null }) {
 
   const [search, setSearch] = useState('')
   const [filterLevels, setFilterLevels] = useState([])
-  const [visibleBooks, setVisibleBooks] = useState([])
-  const [bookLessonRanges, setBookLessonRanges] = useState({})
+  const [filterBook, setFilterBook] = useState('')
+  const [lessonFrom, setLessonFrom] = useState(null)
+  const [lessonTo, setLessonTo] = useState(null)
+  const [lessonOptions, setLessonOptions] = useState([])
   const [filterType, setFilterType] = useState('')
   const [page, setPage] = useState(1)
   const [showSavedOnly, setShowSavedOnly] = useState(false)
   const [savedIds, setSavedIds] = useState(new Set())
   const [savingIds, setSavingIds] = useState(new Set())
 
-  // Per-card English visibility — stores IDs of cards where English is SHOWN
   const [revealedIds, setRevealedIds] = useState(new Set())
 
   function toggleReveal(wordId) {
@@ -69,7 +74,7 @@ function VocabList({ isAdmin, userId = null }) {
     setLoading(true)
     const [{ data: vocabData }, { data: types }, { data: levels }, { data: booksData }] = await Promise.all([
       supabase.from('vocabulary')
-        .select(`*, word_types(type_name), jlpt_levels(level), books(id, book_name), example_sentences(*), conjugations(*)`)
+        .select(`*, word_types(type_name), jlpt_levels(level), vocabulary_books(book_id, lesson_number, books(id, book_name, jlpt_levels(level))), example_sentences(*), conjugations(*)`)
         .order('lesson_number', { ascending: true }),
       supabase.from('word_types').select('*'),
       supabase.from('jlpt_levels').select('*').order('id'),
@@ -88,42 +93,22 @@ function VocabList({ isAdmin, userId = null }) {
   }
 
   useEffect(() => {
-    const visible = filterLevels.length === 0
-      ? books : books.filter(b => filterLevels.includes(b.jlpt_levels?.level))
-    setVisibleBooks(visible)
-    setBookLessonRanges({})
-  }, [filterLevels, books])
-
-  useEffect(() => {
-    visibleBooks.forEach(book => {
-      setBookLessonRanges(prev => {
-        if (prev[book.id]?.lessons) return prev
-        fetchLessonsForBook(book.id)
-        return prev
-      })
-    })
-  }, [visibleBooks])
+    if (filterBook) {
+      fetchLessonsForBook(filterBook)
+    } else {
+      setLessonOptions([])
+      setLessonFrom(null)
+      setLessonTo(null)
+    }
+  }, [filterBook])
 
   async function fetchLessonsForBook(bookId) {
-    const { data } = await supabase.from('vocabulary').select('lesson_number').eq('book_id', bookId)
+    const { data } = await supabase.from('vocabulary_books').select('lesson_number').eq('book_id', bookId)
       .order('lesson_number', { ascending: true })
     if (data) {
       const unique = [...new Set(data.map(d => d.lesson_number).filter(Boolean))]
-      setBookLessonRanges(prev => ({
-        ...prev,
-        [bookId]: { from: null, to: null, lessons: unique, ...(prev[bookId] || {}) }
-      }))
+      setLessonOptions(unique)
     }
-  }
-
-  function setBookRange(bookId, field, value) {
-    setBookLessonRanges(prev => ({ ...prev, [bookId]: { ...prev[bookId], [field]: value } }))
-    setPage(1)
-  }
-
-  function clearBookRange(bookId) {
-    setBookLessonRanges(prev => ({ ...prev, [bookId]: { ...prev[bookId], from: null, to: null } }))
-    setPage(1)
   }
 
   const filtered = vocab.filter(w => {
@@ -133,10 +118,14 @@ function VocabList({ isAdmin, userId = null }) {
     const matchType = filterType === '' || w.word_types?.type_name === filterType
     let matchScope = true
     if (filterLevels.length > 0) matchScope = filterLevels.includes(w.jlpt_levels?.level)
-    if (matchScope && w.book_id && bookLessonRanges[w.book_id]) {
-      const range = bookLessonRanges[w.book_id]
-      if (range.from !== null) matchScope = matchScope && w.lesson_number >= range.from
-      if (range.to !== null) matchScope = matchScope && w.lesson_number <= range.to
+    if (matchScope && filterBook) {
+      const wordBooks = w.vocabulary_books || []
+      matchScope = wordBooks.some(vb => {
+        if (vb.book_id !== Number(filterBook)) return false
+        if (lessonFrom !== null && vb.lesson_number < lessonFrom) return false
+        if (lessonTo !== null && vb.lesson_number > lessonTo) return false
+        return true
+      })
     }
     return matchSearch && matchType && matchScope && (!showSavedOnly || savedIds.has(w.id))
   })
@@ -149,7 +138,7 @@ function VocabList({ isAdmin, userId = null }) {
     setEditData({
       word: word.word, reading: word.reading || '', meaning: word.meaning,
       word_type_id: word.word_type_id || '', jlpt_level_id: word.jlpt_level_id || '',
-      lesson_number: word.lesson_number || '', book_id: word.book_id || '',
+      bookAssignments: (word.vocabulary_books || []).map(vb => ({ book_id: vb.book_id, lesson_number: vb.lesson_number || '' })),
       examples: word.example_sentences.length > 0
         ? word.example_sentences.map(e => ({ id: e.id, japanese_sentence: e.japanese_sentence, english_translation: e.english_translation }))
         : [{ japanese_sentence: '', english_translation: '' }],
@@ -167,15 +156,39 @@ function VocabList({ isAdmin, userId = null }) {
   function updateConjugation(i, field, value) { setEditData(d => { const u = [...d.conjugations]; u[i][field] = value; return { ...d, conjugations: u } }) }
   function removeConjugation(i) { setEditData(d => ({ ...d, conjugations: d.conjugations.filter((_, idx) => idx !== i) })) }
 
+  function toggleBookAssignment(bookId) {
+    setEditData(d => {
+      const exists = d.bookAssignments.some(b => b.book_id === bookId)
+      return {
+        ...d,
+        bookAssignments: exists
+          ? d.bookAssignments.filter(b => b.book_id !== bookId)
+          : [...d.bookAssignments, { book_id: bookId, lesson_number: '' }]
+      }
+    })
+  }
+  function updateBookLesson(bookId, val) {
+    setEditData(d => ({
+      ...d,
+      bookAssignments: d.bookAssignments.map(b => b.book_id === bookId ? { ...b, lesson_number: val } : b)
+    }))
+  }
+
   async function handleSave(vocabId) {
     setSaving(true)
     try {
       const { error: vocabError } = await supabase.from('vocabulary').update({
         word: editData.word, reading: editData.reading, meaning: editData.meaning,
         word_type_id: editData.word_type_id || null, jlpt_level_id: editData.jlpt_level_id || null,
-        lesson_number: editData.lesson_number || null, book_id: editData.book_id || null,
       }).eq('id', vocabId)
       if (vocabError) throw vocabError
+      await supabase.from('vocabulary_books').delete().eq('vocab_id', vocabId)
+      const validBookAssignments = editData.bookAssignments.filter(b => b.book_id)
+      if (validBookAssignments.length > 0) {
+        await supabase.from('vocabulary_books').insert(
+          validBookAssignments.map(b => ({ vocab_id: vocabId, book_id: b.book_id, lesson_number: b.lesson_number || null }))
+        )
+      }
       await supabase.from('example_sentences').delete().eq('vocab_id', vocabId)
       const validExamples = editData.examples.filter(e => e.japanese_sentence.trim())
       if (validExamples.length > 0) {
@@ -219,95 +232,69 @@ function VocabList({ isAdmin, userId = null }) {
     <Box sx={{ maxWidth: 700, mx: 'auto' }}>
 
       {/* FILTERS */}
-      <Card sx={{ mb: 2 }}>
-        <CardContent sx={{ py: isMobile ? 1.5 : 2, '&:last-child': { pb: isMobile ? 1.5 : 2 } }}>
-          <Grid container spacing={1.5} alignItems="flex-start">
+      <Card sx={{ mb: 1.5 }} elevation={0} variant="outlined">
+        <CardContent sx={{ py: 1, px: 1.5, '&:last-child': { pb: 1 } }}>
+          <Grid container spacing={1} alignItems="center">
             <Grid item xs={12}>
               <TextField fullWidth size="small" placeholder="Search word, reading, or meaning..."
                 value={search} onChange={e => { setSearch(e.target.value); setPage(1) }}
-                InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment> }} />
+                InputProps={{ startAdornment: <InputAdornment position="start"><SearchIcon sx={{ fontSize: 18 }} /></InputAdornment> }}
+                sx={{ '& .MuiInputBase-root': { height: 34, fontSize: '13px' } }} />
             </Grid>
-            <Grid item xs={6} sm={4}>
+            <Grid item xs={3}>
               <FormControl fullWidth size="small">
-                <InputLabel shrink>JLPT Level</InputLabel>
+                <InputLabel shrink sx={{ fontSize: '12px' }}>JLPT</InputLabel>
                 <Select multiple value={filterLevels}
                   onChange={e => { setFilterLevels(e.target.value); setPage(1) }}
-                  input={<OutlinedInput notched label="JLPT Level" />}
+                  input={<OutlinedInput notched label="JLPT" />}
                   renderValue={selected => selected.length === 0 ? 'All' : selected.join(', ')}
-                  displayEmpty>
+                  displayEmpty sx={{ height: 34, fontSize: '12px' }}>
                   {jlptLevels.map(l => (
-                    <MenuItem key={l.id} value={l.level}>
+                    <MenuItem key={l.id} value={l.level} dense>
                       <Checkbox checked={filterLevels.includes(l.level)} size="small"
-                        sx={{ color: '#1a3a5c', '&.Mui-checked': { color: '#1a3a5c' } }} />
-                      <ListItemText primary={l.level} />
+                        sx={{ color: '#1a3a5c', '&.Mui-checked': { color: '#1a3a5c' }, p: 0.25 }} />
+                      <ListItemText primary={l.level} primaryTypographyProps={{ fontSize: '13px' }} />
                     </MenuItem>
                   ))}
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={6} sm={4}>
-              <TextField fullWidth select label="Word Type" value={filterType}
+            <Grid item xs={3}>
+              <TextField fullWidth select label="Type" value={filterType}
                 onChange={e => { setFilterType(e.target.value); setPage(1) }}
-                size="small" SelectProps={{ displayEmpty: true }} InputLabelProps={{ shrink: true }}>
-                <MenuItem value="">All Types</MenuItem>
-                {wordTypes.map(t => <MenuItem key={t.id} value={t.type_name}>{t.type_name}</MenuItem>)}
+                size="small" SelectProps={{ displayEmpty: true }} InputLabelProps={{ shrink: true }}
+                sx={{ '& .MuiInputBase-root': { height: 34, fontSize: '12px' } }}>
+                <MenuItem value="" dense><Typography fontSize="13px">All Types</Typography></MenuItem>
+                {wordTypes.map(t => <MenuItem key={t.id} value={t.type_name} dense><Typography fontSize="13px">{t.type_name}</Typography></MenuItem>)}
               </TextField>
             </Grid>
-
-            {visibleBooks.length > 0 && (
-              <Grid item xs={12}>
-                <Divider sx={{ mb: 1.5 }} />
-                <Typography variant="caption" fontWeight="bold" color="text.secondary" display="block" mb={1}>
-                  LESSON RANGE (per book)
-                </Typography>
-                <Grid container spacing={1}>
-                  {visibleBooks.map(book => {
-                    const range = bookLessonRanges[book.id] || { from: null, to: null, lessons: [] }
-                    return (
-                      <Grid item xs={12} key={book.id}>
-                        <Box sx={{ backgroundColor: '#f8fafc', borderRadius: 1, p: 1.5 }}>
-                          <Box display="flex" alignItems="center" gap={1} mb={1}>
-                            <MenuBookIcon sx={{ fontSize: 13, color: '#1a3a5c' }} />
-                            <Typography variant="caption" fontWeight="bold" color="#1a3a5c">{book.book_name}</Typography>
-                            <Chip label={book.jlpt_levels?.level} size="small" color="primary" sx={{ height: 16, fontSize: '10px' }} />
-                          </Box>
-                          <Grid container spacing={1} alignItems="center">
-                            <Grid item xs={5.5}>
-                              <Autocomplete options={range.lessons || []} getOptionLabel={l => `L${l}`}
-                                value={range.from} onChange={(_, val) => setBookRange(book.id, 'from', val)} size="small"
-                                renderInput={params => <TextField {...params} label="From" size="small" InputLabelProps={{ shrink: true }} />} />
-                            </Grid>
-                            <Grid item xs={1} textAlign="center">
-                              <Typography variant="body2" color="text.disabled">—</Typography>
-                            </Grid>
-                            <Grid item xs={5.5}>
-                              <Autocomplete
-                                options={(range.lessons || []).filter(l => range.from === null || l >= range.from)}
-                                getOptionLabel={l => `L${l}`} value={range.to}
-                                onChange={(_, val) => setBookRange(book.id, 'to', val)} size="small"
-                                renderInput={params => <TextField {...params} label="To" size="small" InputLabelProps={{ shrink: true }} />} />
-                            </Grid>
-                          </Grid>
-                          {(range.from !== null || range.to !== null) && (
-                            <Box display="flex" justifyContent="space-between" alignItems="center" mt={0.5}>
-                              <Typography variant="caption" color="text.secondary">
-                                📖 {range.from !== null && range.to !== null
-                                  ? `Lessons ${range.from} – ${range.to}`
-                                  : range.from !== null ? `From Lesson ${range.from}` : `Up to Lesson ${range.to}`}
-                              </Typography>
-                              <Button size="small" onClick={() => clearBookRange(book.id)}
-                                sx={{ color: 'text.disabled', textTransform: 'none', fontSize: '11px', minWidth: 0, p: 0 }}>
-                                Clear
-                              </Button>
-                            </Box>
-                          )}
-                        </Box>
-                      </Grid>
-                    )
-                  })}
-                </Grid>
-              </Grid>
-            )}
+            <Grid item xs={3}>
+              <TextField fullWidth select label="Book" value={filterBook}
+                onChange={e => { setFilterBook(e.target.value); setLessonFrom(null); setLessonTo(null); setPage(1) }}
+                size="small" SelectProps={{ displayEmpty: true }} InputLabelProps={{ shrink: true }}
+                sx={{ '& .MuiInputBase-root': { height: 34, fontSize: '12px' } }}>
+                <MenuItem value="" dense><Typography fontSize="13px">All Books</Typography></MenuItem>
+                {books.map(b => <MenuItem key={b.id} value={b.id} dense><Typography fontSize="13px">{b.book_name}</Typography></MenuItem>)}
+              </TextField>
+            </Grid>
+            <Grid item xs={3}>
+              <Box display="flex" alignItems="center" gap={0.5}>
+                <TextField select label="From" value={lessonFrom ?? ''} disabled={!filterBook}
+                  onChange={e => { setLessonFrom(e.target.value === '' ? null : Number(e.target.value)); setPage(1) }}
+                  size="small" SelectProps={{ displayEmpty: true }} InputLabelProps={{ shrink: true }}
+                  sx={{ flex: 1, '& .MuiInputBase-root': { height: 34, fontSize: '11px' } }}>
+                  <MenuItem value="" dense><Typography fontSize="11px">–</Typography></MenuItem>
+                  {lessonOptions.map(l => <MenuItem key={l} value={l} dense><Typography fontSize="11px">L{l}</Typography></MenuItem>)}
+                </TextField>
+                <TextField select label="To" value={lessonTo ?? ''} disabled={!filterBook}
+                  onChange={e => { setLessonTo(e.target.value === '' ? null : Number(e.target.value)); setPage(1) }}
+                  size="small" SelectProps={{ displayEmpty: true }} InputLabelProps={{ shrink: true }}
+                  sx={{ flex: 1, '& .MuiInputBase-root': { height: 34, fontSize: '11px' } }}>
+                  <MenuItem value="" dense><Typography fontSize="11px">–</Typography></MenuItem>
+                  {lessonOptions.filter(l => lessonFrom === null || l >= lessonFrom).map(l => <MenuItem key={l} value={l} dense><Typography fontSize="11px">L{l}</Typography></MenuItem>)}
+                </TextField>
+              </Box>
+            </Grid>
           </Grid>
         </CardContent>
       </Card>
@@ -374,7 +361,7 @@ function VocabList({ isAdmin, userId = null }) {
                           {wordTypes.map(t => <MenuItem key={t.id} value={t.id}>{t.type_name}</MenuItem>)}
                         </TextField>
                       </Grid>
-                      <Grid item xs={4}>
+                      <Grid item xs={7}>
                         <TextField fullWidth select label="JLPT Level" value={editData.jlpt_level_id}
                           onChange={e => setEditData(d => ({ ...d, jlpt_level_id: e.target.value }))}
                           size="small" SelectProps={{ displayEmpty: true }} InputLabelProps={{ shrink: true }}>
@@ -382,17 +369,25 @@ function VocabList({ isAdmin, userId = null }) {
                           {jlptLevels.map(l => <MenuItem key={l.id} value={l.id}>{l.level}</MenuItem>)}
                         </TextField>
                       </Grid>
-                      <Grid item xs={3}>
-                        <TextField fullWidth label="Lesson" type="number" value={editData.lesson_number}
-                          onChange={e => setEditData(d => ({ ...d, lesson_number: e.target.value }))} size="small" />
-                      </Grid>
                       <Grid item xs={12}>
-                        <TextField fullWidth select label="Book" value={editData.book_id}
-                          onChange={e => setEditData(d => ({ ...d, book_id: e.target.value }))}
-                          size="small" SelectProps={{ displayEmpty: true }} InputLabelProps={{ shrink: true }}>
-                          <MenuItem value="">Select...</MenuItem>
-                          {books.map(b => <MenuItem key={b.id} value={b.id}>{b.book_name}</MenuItem>)}
-                        </TextField>
+                        <Typography variant="caption" fontWeight="bold" color="text.secondary" display="block" mb={0.5}>BOOK ASSIGNMENTS</Typography>
+                        {books.map(book => {
+                          const assignment = editData.bookAssignments.find(b => b.book_id === book.id)
+                          const isChecked = !!assignment
+                          return (
+                            <Box key={book.id} display="flex" alignItems="center" gap={1} mb={0.5}>
+                              <Checkbox checked={isChecked} size="small"
+                                onChange={() => toggleBookAssignment(book.id)}
+                                sx={{ color: '#1a3a5c', '&.Mui-checked': { color: '#1a3a5c' }, p: 0.5 }} />
+                              <Typography variant="body2" sx={{ flex: 1 }}>{book.book_name}</Typography>
+                              {isChecked && (
+                                <TextField label="Lesson" type="number" value={assignment.lesson_number}
+                                  onChange={e => updateBookLesson(book.id, e.target.value)}
+                                  size="small" sx={{ width: 90 }} inputProps={{ min: 1 }} />
+                              )}
+                            </Box>
+                          )
+                        })}
                       </Grid>
                     </Grid>
                     <Divider sx={{ my: 1.5 }} />
@@ -443,12 +438,10 @@ function VocabList({ isAdmin, userId = null }) {
                     </Box>
                   </Box>
                 ) : (
-                  // VIEW MODE
                   <Box>
                     <Box display="flex" flexDirection={isMobile ? 'column' : 'row'}
                       justifyContent="space-between" alignItems={isMobile ? 'flex-start' : 'flex-start'}
                       mb={0.5} gap={isMobile ? 0.5 : 0}>
-                      {/* Word + reading + speaker */}
                       <Box display="flex" alignItems="center" gap={1}>
                         <Box>
                           <Typography variant={isMobile ? 'h6' : 'h5'} fontWeight="bold">{word.word}</Typography>
@@ -463,12 +456,12 @@ function VocabList({ isAdmin, userId = null }) {
                         </Tooltip>
                       </Box>
 
-                      {/* Chips + eye + bookmark + admin buttons */}
                       <Box display="flex" gap={0.5} alignItems="center" flexWrap="wrap">
                         {word.jlpt_levels?.level && <Chip label={word.jlpt_levels.level} size="small" color="primary" />}
                         {word.word_types?.type_name && <Chip label={word.word_types.type_name} size="small" variant="outlined" />}
-                        {word.lesson_number && <Chip label={`L${word.lesson_number}`} size="small" variant="outlined" />}
-                        {/* Per-card English toggle */}
+                        {word.vocabulary_books?.map(vb => vb.lesson_number && (
+                          <Chip key={vb.book_id} label={`L${vb.lesson_number}`} size="small" variant="outlined" />
+                        ))}
                         <Tooltip title={isRevealed ? 'Hide English' : 'Show English'}>
                           <IconButton size="small" onClick={() => toggleReveal(word.id)}
                             sx={{ color: isRevealed ? '#1a3a5c' : '#b0bec5' }}>
@@ -501,13 +494,16 @@ function VocabList({ isAdmin, userId = null }) {
                       </Box>
                     </Box>
 
-                    {/* Meaning — always shown */}
                     <Typography variant="body2" color="text.secondary" mb={0.5}>📖 {word.meaning}</Typography>
 
-                    {word.books?.book_name && (
-                      <Box display="flex" alignItems="center" gap={0.5} mb={1}>
+                    {word.vocabulary_books?.length > 0 && (
+                      <Box display="flex" alignItems="center" gap={0.5} flexWrap="wrap" mb={1}>
                         <MenuBookIcon sx={{ fontSize: 13, color: 'text.disabled' }} />
-                        <Typography variant="caption" color="text.disabled">{word.books.book_name}</Typography>
+                        {word.vocabulary_books.map((vb, i) => (
+                          <Typography key={vb.book_id} variant="caption" color="text.disabled">
+                            {vb.books?.book_name}{vb.lesson_number ? ` L${vb.lesson_number}` : ''}{i < word.vocabulary_books.length - 1 ? ' ·' : ''}
+                          </Typography>
+                        ))}
                       </Box>
                     )}
 
@@ -515,7 +511,7 @@ function VocabList({ isAdmin, userId = null }) {
                       <Box mb={1}>
                         <Typography variant="caption" color="text.secondary" fontWeight="bold">EXAMPLES</Typography>
                         {word.example_sentences.map(ex => (
-                          <Box key={ex.id} sx={{ backgroundColor: '#f8fafc', borderRadius: 1, p: 1, mt: 0.5 }}>
+                          <Box key={ex.id} sx={{ backgroundColor: exampleBg, borderRadius: 1, p: 1, mt: 0.5 }}>
                             <Box display="flex" alignItems="flex-start" justifyContent="space-between">
                               <Typography variant="body2" color="warning.dark" sx={{ flex: 1 }}>
                                 {ex.japanese_sentence}
@@ -527,7 +523,6 @@ function VocabList({ isAdmin, userId = null }) {
                                 </IconButton>
                               </Tooltip>
                             </Box>
-                            {/* English translation — controlled per card */}
                             {isRevealed && (
                               <Typography variant="caption" color="text.secondary">{ex.english_translation}</Typography>
                             )}
@@ -542,7 +537,7 @@ function VocabList({ isAdmin, userId = null }) {
                         <Box display="flex" flexWrap="wrap" gap={0.5} mt={0.5}>
                           {word.conjugations.map(conj => (
                             <Chip key={conj.id} label={`${conj.form_type}: ${conj.conjugated_word}`} size="small"
-                              sx={{ backgroundColor: '#e8f5e9', color: '#2e7d32', fontSize: isMobile ? '10px' : '12px' }} />
+                              sx={{ backgroundColor: isDark ? '#1a3d1a' : '#e8f5e9', color: isDark ? '#81c784' : '#2e7d32', fontSize: isMobile ? '10px' : '12px' }} />
                           ))}
                         </Box>
                       </Box>

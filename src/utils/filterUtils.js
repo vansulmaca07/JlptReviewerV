@@ -6,6 +6,9 @@ import { supabase } from '../supabaseClient'
  *
  * Returns array of matching vocabulary IDs to use in .in('id', ids)
  * OR null if no filter applied (meaning fetch all).
+ *
+ * Book/lesson filtering now uses the vocabulary_books junction table,
+ * supporting words that belong to multiple books.
  */
 export async function getFilteredVocabIds(activeFilter) {
   if (!activeFilter) return null
@@ -32,28 +35,34 @@ export async function getFilteredVocabIds(activeFilter) {
   }
 
   if (!hasRanges) {
-    // Level filter only — simple query
+    // Level filter only — query vocabulary directly (jlpt_level_id lives on vocabulary)
     const { data } = await supabase
       .from('vocabulary').select('id')
       .in('jlpt_level_id', levelIds)
     return (data || []).map(d => d.id)
   }
 
-  // Has ranges — only query books that actually have a range set
-  const promises = bookRanges.filter(({ from, to }) => from !== null || to !== null).map(async ({ bookId, from, to }) => {
-    let q = supabase.from('vocabulary').select('id').eq('book_id', bookId)
+  // Has ranges — query through vocabulary_books junction table
+  // Each active book range runs independently; results are OR-combined (union)
+  const promises = bookRanges
+    .filter(({ from, to }) => from !== null || to !== null)
+    .map(async ({ bookId, from, to }) => {
+      let q = supabase
+        .from('vocabulary_books')
+        .select('vocab_id, vocabulary!inner(id, jlpt_level_id)')
+        .eq('book_id', bookId)
 
-    // Apply lesson range if set
-    if (from !== null) q = q.gte('lesson_number', from)
-    if (to !== null) q = q.lte('lesson_number', to)
+      if (from !== null) q = q.gte('lesson_number', from)
+      if (to !== null) q = q.lte('lesson_number', to)
 
-    // Apply level filter if set
-    if (hasLevels) q = q.in('jlpt_level_id', levelIds)
+      // Apply level filter via the joined vocabulary row
+      if (hasLevels) q = q.in('vocabulary.jlpt_level_id', levelIds)
 
-    const { data } = await q
-    return (data || []).map(d => d.id)
-  })
+      const { data } = await q
+      return (data || []).map(d => d.vocab_id)
+    })
 
   const results = await Promise.all(promises)
-  return results.flat()
+  // Deduplicate — a word in multiple books should only appear once
+  return [...new Set(results.flat())]
 }

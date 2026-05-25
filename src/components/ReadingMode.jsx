@@ -29,6 +29,10 @@ const TOPICS = [
 function ReadingMode({ activeFilter, onBack }) {
   const theme = useTheme()
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'))
+  const isDark = theme.palette.mode === 'dark'
+
+  const vocabSourceBg = isDark ? '#1a2a3a' : '#f0f4f8'
+  const explanationBg = isDark ? '#2a2a2a' : '#f8fafc'
 
   const [topic, setTopic] = useState('')
   const [generating, setGenerating] = useState(false)
@@ -88,7 +92,6 @@ function ReadingMode({ activeFilter, onBack }) {
 
   const allAnswered = exercise && Object.keys(answers).length === exercise.questions.length
 
-  // SETUP SCREEN
   if (!exercise && !generating) {
     return (
       <Box sx={{ maxWidth: 600, mx: 'auto' }}>
@@ -100,7 +103,7 @@ function ReadingMode({ activeFilter, onBack }) {
           AI will generate an original JLPT-style passage using your vocabulary words.
         </Typography>
 
-        <Card sx={{ mb: 2, backgroundColor: '#f0f4f8' }} elevation={0}>
+        <Card sx={{ mb: 2, backgroundColor: vocabSourceBg }} elevation={0}>
           <CardContent sx={{ py: '10px !important' }}>
             <Typography variant="caption" fontWeight="bold" color="text.secondary" display="block" mb={0.5}>
               📚 VOCABULARY SOURCE
@@ -126,7 +129,7 @@ function ReadingMode({ activeFilter, onBack }) {
                     backgroundColor: topic === t.value ? '#1a3a5c' : 'transparent',
                     color: topic === t.value ? 'white' : '#1a3a5c',
                     borderColor: '#1a3a5c',
-                    '&:hover': { backgroundColor: topic === t.value ? '#1a3a5c' : '#e8f0fe' }
+                    '&:hover': { backgroundColor: topic === t.value ? '#1a3a5c' : isDark ? 'rgba(26,58,92,0.2)' : '#e8f0fe' }
                   }}
                 />
               ))}
@@ -145,7 +148,6 @@ function ReadingMode({ activeFilter, onBack }) {
     )
   }
 
-  // LOADING
   if (generating) {
     return (
       <Box sx={{ maxWidth: 600, mx: 'auto', textAlign: 'center', mt: 8 }}>
@@ -161,7 +163,6 @@ function ReadingMode({ activeFilter, onBack }) {
     )
   }
 
-  // EXERCISE SCREEN
   return (
     <Box sx={{ maxWidth: 680, mx: 'auto' }}>
       <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
@@ -178,7 +179,6 @@ function ReadingMode({ activeFilter, onBack }) {
         </Alert>
       )}
 
-      {/* PASSAGE */}
       <Card sx={{ mb: 2, borderLeft: '4px solid #1a3a5c' }}>
         <CardContent sx={{ py: isMobile ? 1.5 : 2 }}>
           <Typography variant="caption" fontWeight="bold" color="text.secondary" display="block" mb={1}>
@@ -208,8 +208,9 @@ function ReadingMode({ activeFilter, onBack }) {
               ? isCorrect ? '2px solid #4caf50'
               : isWrong ? '2px solid #f44336'
               : unanswered ? '2px solid #ff9800'
-              : '1px solid #e0e0e0'
-              : '1px solid #e0e0e0'
+              : '1px solid'
+              : '1px solid',
+            borderColor: submitted ? undefined : 'divider'
           }}>
             <CardContent sx={{ py: isMobile ? 1.5 : 2, '&:last-child': { pb: isMobile ? 1.5 : 2 } }}>
               <Box display="flex" alignItems="flex-start" gap={1} mb={1}>
@@ -244,7 +245,7 @@ function ReadingMode({ activeFilter, onBack }) {
                           </Box>
                         }
                         sx={{ mb: 0, px: 0.5, borderRadius: 1,
-                          backgroundColor: isChoiceCorrect ? '#e8f5e9' : isChoiceWrong ? '#ffebee' : 'transparent' }}
+                          backgroundColor: isChoiceCorrect ? (isDark ? '#1a3d1a' : '#e8f5e9') : isChoiceWrong ? (isDark ? '#3d1a1a' : '#ffebee') : 'transparent' }}
                       />
                     )
                   })}
@@ -258,7 +259,7 @@ function ReadingMode({ activeFilter, onBack }) {
                     {showExplanations[i] ? '▲ Hide explanation' : '▼ Show explanation'}
                   </Button>
                   <Collapse in={!!showExplanations[i]}>
-                    <Box sx={{ backgroundColor: '#f8fafc', borderRadius: 1, p: 1.5, mt: 0.5 }}>
+                    <Box sx={{ backgroundColor: explanationBg, borderRadius: 1, p: 1.5, mt: 0.5 }}>
                       <Typography variant="caption" color="text.secondary">
                         ✅ Correct answer: <strong>{q.answer}</strong>
                       </Typography>

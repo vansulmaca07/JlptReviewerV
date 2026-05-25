@@ -1,20 +1,17 @@
 import { useState, useEffect } from 'react'
 import {
   Box, Card, CardContent, Typography, Grid, Button, Chip,
-  TextField, FormGroup, FormControlLabel, Checkbox, Divider,
-  InputAdornment, Autocomplete, Select, FormControl, InputLabel,
+  TextField, FormGroup, FormControlLabel, Checkbox,
+  Select, FormControl, InputLabel, MenuItem,
   OutlinedInput, ListItemText, useMediaQuery, useTheme
 } from '@mui/material'
-import CloseIcon from '@mui/icons-material/Close'
-import IconButton from '@mui/material/IconButton'
 import StyleIcon from '@mui/icons-material/Style'
 import FitnessCenterIcon from '@mui/icons-material/FitnessCenter'
 import QuizIcon from '@mui/icons-material/Quiz'
 import EditNoteIcon from '@mui/icons-material/EditNote'
 import MenuBookIcon from '@mui/icons-material/MenuBook'
 import BookmarkIcon from '@mui/icons-material/Bookmark'
-import MenuItem from '@mui/material/MenuItem'
-import FlashCardMode from './FlashCardMode'
+import FlashcardMode from './FlashcardMode'
 import ConjugationDrill from './ConjugationDrill'
 import MultipleChoice from './MultipleChoice'
 import ReadingMode from './ReadingMode'
@@ -22,7 +19,7 @@ import { supabase } from '../supabaseClient'
 import { getSavedWordIds } from '../utils/savedWordsUtils'
 
 const MODES = [
-  { id: 'flashcard', label: 'flashCard', icon: <StyleIcon />, description: 'JP → EN flip cards', available: true },
+  { id: 'flashcard', label: 'Flashcard', icon: <StyleIcon />, description: 'JP → EN flip cards', available: true },
   { id: 'conjugation', label: 'Conjugation', icon: <FitnessCenterIcon />, description: 'Test verb conjugations', available: true },
   { id: 'multiple', label: 'Multiple Choice', icon: <QuizIcon />, description: 'Pick the correct answer', available: true },
   { id: 'reading', label: '読解', icon: <MenuBookIcon />, description: 'Reading comprehension', available: true },
@@ -34,6 +31,7 @@ const isReadingMode = (mode) => mode === 'reading'
 function ReviewMode({ userId = null }) {
   const theme = useTheme()
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'))
+  const isDark = theme.palette.mode === 'dark'
 
   const [selectedMode, setSelectedMode] = useState(null)
   const [started, setStarted] = useState(false)
@@ -43,8 +41,10 @@ function ReviewMode({ userId = null }) {
 
   const [jlptLevels, setJlptLevels] = useState([])
   const [books, setBooks] = useState([])
-  const [visibleBooks, setVisibleBooks] = useState([])
-  const [bookLessonRanges, setBookLessonRanges] = useState({})
+  const [filterBook, setFilterBook] = useState('')
+  const [lessonFrom, setLessonFrom] = useState(null)
+  const [lessonTo, setLessonTo] = useState(null)
+  const [lessonOptions, setLessonOptions] = useState([])
   const [filterLevels, setFilterLevels] = useState([])
   const [formTypes, setFormTypes] = useState([])
   const [selectedForms, setSelectedForms] = useState([])
@@ -71,46 +71,26 @@ function ReviewMode({ userId = null }) {
     ])
     setJlptLevels(levels || [])
     setBooks(booksData || [])
-    setVisibleBooks(booksData || [])
   }
 
   useEffect(() => {
-    const visible = filterLevels.length === 0
-      ? books
-      : books.filter(b => filterLevels.includes(b.jlpt_levels?.level))
-    setVisibleBooks(visible)
-    setBookLessonRanges({})
-  }, [filterLevels, books])
-
-  useEffect(() => {
-    visibleBooks.forEach(book => {
-      setBookLessonRanges(prev => {
-        if (prev[book.id]?.lessons) return prev
-        fetchLessonsForBook(book.id)
-        return prev
-      })
-    })
-  }, [visibleBooks])
+    if (filterBook) {
+      fetchLessonsForBook(filterBook)
+    } else {
+      setLessonOptions([])
+      setLessonFrom(null)
+      setLessonTo(null)
+    }
+  }, [filterBook])
 
   async function fetchLessonsForBook(bookId) {
     const { data } = await supabase
-      .from('vocabulary').select('lesson_number').eq('book_id', bookId)
+      .from('vocabulary_books').select('lesson_number').eq('book_id', bookId)
       .order('lesson_number', { ascending: true })
     if (data) {
       const unique = [...new Set(data.map(d => d.lesson_number).filter(Boolean))]
-      setBookLessonRanges(prev => ({
-        ...prev,
-        [bookId]: { from: null, to: null, lessons: unique, ...(prev[bookId] || {}) }
-      }))
+      setLessonOptions(unique)
     }
-  }
-
-  function setBookRange(bookId, field, value) {
-    setBookLessonRanges(prev => ({ ...prev, [bookId]: { ...prev[bookId], [field]: value } }))
-  }
-
-  function clearBookRange(bookId) {
-    setBookLessonRanges(prev => ({ ...prev, [bookId]: { ...prev[bookId], from: null, to: null } }))
   }
 
   useEffect(() => {
@@ -155,11 +135,7 @@ function ReviewMode({ userId = null }) {
 
   const activeFilter = {
     levels: filterLevels,
-    bookRanges: visibleBooks.map(b => ({
-      bookId: b.id,
-      from: bookLessonRanges[b.id]?.from ?? null,
-      to: bookLessonRanges[b.id]?.to ?? null,
-    })),
+    bookRanges: filterBook ? [{ bookId: Number(filterBook), from: lessonFrom, to: lessonTo }] : [],
     savedVocabIds: savedOnly ? [...savedIds] : null,
   }
 
@@ -168,81 +144,76 @@ function ReviewMode({ userId = null }) {
     || (selectedMode === 'conjugation' && selectedForms.length === 0)
     || (savedOnly && savedCount === 0)
 
-  if (started && selectedMode === 'flashcard') return <FlashCardMode activeFilter={activeFilter} cardCount={cardCount} onBack={handleBack} userId={userId} />
-  if (started && selectedMode === 'conjugation') return <ConjugationDrill activeFilter={activeFilter} cardCount={cardCount} selectedForms={selectedForms} onBack={handleBack} />
+  if (started && selectedMode === 'flashcard') return <FlashcardMode activeFilter={activeFilter} cardCount={cardCount} onBack={handleBack} userId={userId} />
+  if (started && selectedMode === 'conjugation') return <ConjugationDrill activeFilter={activeFilter} cardCount={cardCount} selectedForms={selectedForms} onBack={handleBack} userId={userId} />
   if (started && selectedMode === 'multiple') return <MultipleChoice activeFilter={activeFilter} cardCount={cardCount} onBack={handleBack} userId={userId} />
   if (started && selectedMode === 'reading') return <ReadingMode activeFilter={activeFilter} onBack={handleBack} />
 
   function getFilterSummary() {
-    if (savedOnly) return `🔖 Saved words (${savedCount})`
+    if (savedOnly) return `Saved words (${savedCount})`
     const parts = []
     if (filterLevels.length > 0) parts.push(filterLevels.join(', '))
-    const hasRanges = Object.values(bookLessonRanges).some(r => r.from !== null || r.to !== null)
-    if (hasRanges) {
-      visibleBooks.forEach(b => {
-        const r = bookLessonRanges[b.id]
-        if (!r || (r.from === null && r.to === null)) return
-        const rangeStr = r.from !== null && r.to !== null
-          ? `L${r.from}–${r.to}` : r.from !== null ? `L${r.from}+` : `up to L${r.to}`
-        parts.push(`${b.book_name}: ${rangeStr}`)
-      })
+    if (filterBook) {
+      const bookName = books.find(b => b.id === Number(filterBook))?.book_name || 'Book'
+      const rangeStr = lessonFrom !== null && lessonTo !== null
+        ? `L${lessonFrom}–${lessonTo}` : lessonFrom !== null ? `L${lessonFrom}+` : lessonTo !== null ? `up to L${lessonTo}` : ''
+      parts.push(rangeStr ? `${bookName}: ${rangeStr}` : bookName)
     }
     return parts.length > 0 ? parts.join(' | ') : 'All words'
   }
 
   return (
-    <Box sx={{ maxWidth: 700, mx: 'auto' }}>
-      <Typography variant={isMobile ? 'h6' : 'h5'} fontWeight="bold" mb={0.5}>復習モード</Typography>
-      <Typography variant="body2" color="text.secondary" mb={2}>Choose a review mode to start studying!</Typography>
-
-      <Grid container spacing={isMobile ? 1 : 2} mb={2}>
+    <Box sx={{ maxWidth: 600, mx: 'auto' }}>
+      {/* MODE SELECTION — horizontal scrollable chips */}
+      <Typography variant="subtitle2" fontWeight="bold" mb={1}>復習モード</Typography>
+      <Box sx={{ display: 'flex', gap: 1, overflowX: 'auto', pb: 1, mb: 1.5, '&::-webkit-scrollbar': { display: 'none' } }}>
         {MODES.map(mode => (
-          <Grid item xs={6} key={mode.id}>
-            <Card
-              onClick={() => mode.available && setSelectedMode(mode.id)}
-              sx={{
-                cursor: mode.available ? 'pointer' : 'not-allowed',
-                border: selectedMode === mode.id ? '2px solid #1a3a5c' : '2px solid transparent',
-                opacity: mode.available ? 1 : 0.45,
-                transition: 'all 0.2s',
-                '&:hover': mode.available ? { boxShadow: 4, transform: 'translateY(-2px)' } : {}
-              }}>
-              <CardContent sx={{ textAlign: 'center', py: isMobile ? 1.5 : 3, px: isMobile ? 1 : 2, '&:last-child': { pb: isMobile ? 1.5 : 3 } }}>
-                <Box sx={{ color: selectedMode === mode.id ? '#1a3a5c' : 'text.secondary', mb: 0.5, '& svg': { fontSize: isMobile ? 28 : 40 } }}>
-                  {mode.icon}
-                </Box>
-                <Typography fontWeight="bold" variant={isMobile ? 'caption' : 'body1'} display="block">
-                  {mode.label}
-                </Typography>
-                {!isMobile && (
-                  <Typography variant="caption" color="text.secondary">{mode.description}</Typography>
-                )}
-                {!mode.available && (
-                  <Chip label="Soon" size="small" sx={{ mt: 0.5, height: 16, fontSize: '10px' }} />
-                )}
-              </CardContent>
-            </Card>
-          </Grid>
+          <Card
+            key={mode.id}
+            onClick={() => mode.available && setSelectedMode(mode.id)}
+            sx={{
+              cursor: mode.available ? 'pointer' : 'not-allowed',
+              border: selectedMode === mode.id ? '2px solid #1a3a5c' : '2px solid transparent',
+              opacity: mode.available ? 1 : 0.4,
+              minWidth: isMobile ? 80 : 100,
+              flex: '0 0 auto',
+              transition: 'all 0.15s',
+              backgroundColor: selectedMode === mode.id ? (isDark ? 'rgba(26,58,92,0.2)' : 'rgba(26,58,92,0.05)') : undefined,
+            }}
+            elevation={selectedMode === mode.id ? 2 : 0}
+            variant={selectedMode === mode.id ? 'elevation' : 'outlined'}
+          >
+            <CardContent sx={{ textAlign: 'center', py: 1, px: 1, '&:last-child': { pb: 1 } }}>
+              <Box sx={{ color: selectedMode === mode.id ? '#1a3a5c' : 'text.disabled', '& svg': { fontSize: 22 } }}>
+                {mode.icon}
+              </Box>
+              <Typography fontWeight={selectedMode === mode.id ? 700 : 500} fontSize="11px" mt={0.25} noWrap>
+                {mode.label}
+              </Typography>
+              {!mode.available && (
+                <Chip label="Soon" size="small" sx={{ height: 12, fontSize: '8px', mt: 0.25, '& .MuiChip-label': { px: 0.5 } }} />
+              )}
+            </CardContent>
+          </Card>
         ))}
-      </Grid>
+      </Box>
 
       {selectedMode === 'conjugation' && formTypes.length > 0 && (
-        <Card sx={{ mb: 2 }}>
-          <CardContent sx={{ py: isMobile ? 1.5 : 2, '&:last-child': { pb: isMobile ? 1.5 : 2 } }}>
-            <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
-              <Typography fontWeight="bold" variant={isMobile ? 'body2' : 'body1'}>📝 Form Types</Typography>
-              <Button size="small" onClick={toggleAll} sx={{ color: '#1a3a5c', textTransform: 'none', fontSize: isMobile ? '11px' : '13px' }}>
+        <Card sx={{ mb: 1.5 }} elevation={0} variant="outlined">
+          <CardContent sx={{ py: 1, px: 1.5, '&:last-child': { pb: 1 } }}>
+            <Box display="flex" justifyContent="space-between" alignItems="center" mb={0.5}>
+              <Typography fontWeight="bold" fontSize="12px">Form Types</Typography>
+              <Button size="small" onClick={toggleAll} sx={{ color: '#1a3a5c', textTransform: 'none', fontSize: '11px', minWidth: 0, p: 0 }}>
                 {selectedForms.length === formTypes.length ? 'Uncheck All' : 'Check All'}
               </Button>
             </Box>
-            <Divider sx={{ mb: 1 }} />
             <FormGroup row>
               {formTypes.map(form => (
                 <FormControlLabel key={form}
                   control={<Checkbox checked={selectedForms.includes(form)} onChange={() => toggleForm(form)} size="small"
-                    sx={{ color: '#1a3a5c', '&.Mui-checked': { color: '#1a3a5c' }, py: 0.5 }} />}
-                  label={<Typography variant="caption">{form}</Typography>}
-                  sx={{ width: '50%', mr: 0 }} />
+                    sx={{ color: '#1a3a5c', '&.Mui-checked': { color: '#1a3a5c' }, p: 0.25 }} />}
+                  label={<Typography fontSize="11px">{form}</Typography>}
+                  sx={{ width: '50%', mr: 0, mb: 0 }} />
               ))}
             </FormGroup>
             {selectedForms.length === 0 && (
@@ -254,153 +225,118 @@ function ReviewMode({ userId = null }) {
         </Card>
       )}
 
-      <Card sx={{ mb: 2 }}>
-        <CardContent sx={{ py: isMobile ? 1.5 : 2, '&:last-child': { pb: isMobile ? 1.5 : 2 } }}>
-          <Box display="flex" justifyContent="space-between" alignItems="center" mb={1.5}>
-            <Typography fontWeight="bold" variant={isMobile ? 'body2' : 'body1'}>📚 Filter Words</Typography>
+      <Card sx={{ mb: 1.5 }} elevation={0} variant="outlined">
+        <CardContent sx={{ py: 1, px: 1.5, '&:last-child': { pb: 1 } }}>
+          <Box display="flex" justifyContent="space-between" alignItems="center" mb={0.75}>
+            <Typography fontWeight="bold" fontSize="12px">Filter Words</Typography>
             {userId && (
               <Chip
-                icon={<BookmarkIcon sx={{ fontSize: '14px !important' }} />}
+                icon={<BookmarkIcon sx={{ fontSize: '12px !important' }} />}
                 label={savedCount > 0 ? `Saved (${savedCount})` : 'Saved'}
                 size="small"
                 onClick={() => savedCount > 0 && setSavedOnly(s => !s)}
                 variant={savedOnly ? 'filled' : 'outlined'}
                 sx={{
+                  height: 22,
                   cursor: savedCount > 0 ? 'pointer' : 'default',
                   opacity: savedCount > 0 ? 1 : 0.4,
                   backgroundColor: savedOnly ? '#1a3a5c' : 'transparent',
                   color: savedOnly ? 'white' : '#1a3a5c',
                   borderColor: '#1a3a5c',
+                  fontSize: '10px',
                   '& .MuiChip-icon': { color: savedOnly ? 'white' : '#1a3a5c' },
                 }}
               />
             )}
           </Box>
 
-          {/* Hide level/lesson filters when savedOnly is on */}
           {!savedOnly && (
-            <Grid container spacing={1.5} alignItems="flex-start">
-              <Grid item xs={12} sm={5}>
+            <Grid container spacing={1} alignItems="center">
+              <Grid item xs={3}>
                 <FormControl fullWidth size="small">
-                  <InputLabel shrink>JLPT Level</InputLabel>
+                  <InputLabel shrink sx={{ fontSize: '12px' }}>JLPT</InputLabel>
                   <Select multiple value={filterLevels} onChange={e => setFilterLevels(e.target.value)}
-                    input={<OutlinedInput notched label="JLPT Level" />}
-                    renderValue={selected => selected.length === 0 ? 'All Levels' : selected.join(', ')}
-                    displayEmpty>
+                    input={<OutlinedInput notched label="JLPT" />}
+                    renderValue={selected => selected.length === 0 ? 'All' : selected.join(', ')}
+                    displayEmpty sx={{ height: 34, fontSize: '12px' }}>
                     {jlptLevels.map(l => (
-                      <MenuItem key={l.id} value={l.level}>
+                      <MenuItem key={l.id} value={l.level} dense>
                         <Checkbox checked={filterLevels.includes(l.level)} size="small"
-                          sx={{ color: '#1a3a5c', '&.Mui-checked': { color: '#1a3a5c' } }} />
-                        <ListItemText primary={l.level} />
+                          sx={{ color: '#1a3a5c', '&.Mui-checked': { color: '#1a3a5c' }, p: 0.25 }} />
+                        <ListItemText primary={l.level} primaryTypographyProps={{ fontSize: '13px' }} />
                       </MenuItem>
                     ))}
                   </Select>
                 </FormControl>
               </Grid>
-
-              {visibleBooks.length > 0 && (
-                <Grid item xs={12}>
-                  <Divider sx={{ mb: 1.5 }} />
-                  <Typography variant="caption" fontWeight="bold" color="text.secondary" display="block" mb={1}>
-                    LESSON RANGE (per book)
-                  </Typography>
-                  <Grid container spacing={1}>
-                    {visibleBooks.map(book => {
-                      const range = bookLessonRanges[book.id] || { from: null, to: null, lessons: [] }
-                      return (
-                        <Grid item xs={12} key={book.id}>
-                          <Box sx={{ backgroundColor: '#f8fafc', borderRadius: 1, p: 1.5 }}>
-                            <Box display="flex" alignItems="center" gap={1} mb={1}>
-                              <MenuBookIcon sx={{ fontSize: 13, color: '#1a3a5c' }} />
-                              <Typography variant="caption" fontWeight="bold" color="#1a3a5c">{book.book_name}</Typography>
-                              <Chip label={book.jlpt_levels?.level} size="small" color="primary" sx={{ height: 16, fontSize: '10px' }} />
-                            </Box>
-                            <Grid container spacing={1} alignItems="center">
-                              <Grid item xs={isMobile ? 5.5 : 5}>
-                                <Autocomplete options={range.lessons || []} getOptionLabel={l => `L${l}`}
-                                  value={range.from} onChange={(_, val) => setBookRange(book.id, 'from', val)} size="small"
-                                  renderInput={params => <TextField {...params} label="From" size="small" InputLabelProps={{ shrink: true }} />} />
-                              </Grid>
-                              <Grid item xs={1} textAlign="center">
-                                <Typography variant="body2" color="text.disabled">—</Typography>
-                              </Grid>
-                              <Grid item xs={isMobile ? 5.5 : 5}>
-                                <Autocomplete
-                                  options={(range.lessons || []).filter(l => range.from === null || l >= range.from)}
-                                  getOptionLabel={l => `L${l}`} value={range.to}
-                                  onChange={(_, val) => setBookRange(book.id, 'to', val)} size="small"
-                                  renderInput={params => <TextField {...params} label="To" size="small" InputLabelProps={{ shrink: true }} />} />
-                              </Grid>
-                              {!isMobile && (
-                                <Grid item xs={1}>
-                                  {(range.from !== null || range.to !== null) && (
-                                    <IconButton size="small" onClick={() => clearBookRange(book.id)} sx={{ color: 'text.disabled' }}>
-                                      <CloseIcon fontSize="small" />
-                                    </IconButton>
-                                  )}
-                                </Grid>
-                              )}
-                            </Grid>
-                            {isMobile && (range.from !== null || range.to !== null) && (
-                              <Box display="flex" justifyContent="flex-end" mt={0.5}>
-                                <Button size="small" onClick={() => clearBookRange(book.id)}
-                                  sx={{ color: 'text.disabled', textTransform: 'none', fontSize: '11px', minWidth: 0, p: 0 }}>
-                                  Clear
-                                </Button>
-                              </Box>
-                            )}
-                            {(range.from !== null || range.to !== null) && (
-                              <Typography variant="caption" color="text.secondary" mt={0.5} display="block">
-                                📖 {range.from !== null && range.to !== null
-                                  ? `Lessons ${range.from} – ${range.to}`
-                                  : range.from !== null ? `From Lesson ${range.from}` : `Up to Lesson ${range.to}`}
-                              </Typography>
-                            )}
-                          </Box>
-                        </Grid>
-                      )
-                    })}
-                  </Grid>
-                </Grid>
-              )}
+              <Grid item xs={4}>
+                <TextField fullWidth select label="Book" value={filterBook}
+                  onChange={e => { setFilterBook(e.target.value); setLessonFrom(null); setLessonTo(null) }}
+                  size="small" SelectProps={{ displayEmpty: true }} InputLabelProps={{ shrink: true }}
+                  sx={{ '& .MuiInputBase-root': { height: 34, fontSize: '12px' } }}>
+                  <MenuItem value="" dense><Typography fontSize="12px">All Books</Typography></MenuItem>
+                  {books.map(b => <MenuItem key={b.id} value={b.id} dense><Typography fontSize="12px">{b.book_name}</Typography></MenuItem>)}
+                </TextField>
+              </Grid>
+              <Grid item xs={5}>
+                <Box display="flex" alignItems="center" gap={0.5}>
+                  <TextField select label="From" value={lessonFrom ?? ''} disabled={!filterBook}
+                    onChange={e => setLessonFrom(e.target.value === '' ? null : Number(e.target.value))}
+                    size="small" SelectProps={{ displayEmpty: true }} InputLabelProps={{ shrink: true }}
+                    sx={{ flex: 1, '& .MuiInputBase-root': { height: 34, fontSize: '11px' } }}>
+                    <MenuItem value="" dense><Typography fontSize="11px">–</Typography></MenuItem>
+                    {lessonOptions.map(l => <MenuItem key={l} value={l} dense><Typography fontSize="11px">L{l}</Typography></MenuItem>)}
+                  </TextField>
+                  <TextField select label="To" value={lessonTo ?? ''} disabled={!filterBook}
+                    onChange={e => setLessonTo(e.target.value === '' ? null : Number(e.target.value))}
+                    size="small" SelectProps={{ displayEmpty: true }} InputLabelProps={{ shrink: true }}
+                    sx={{ flex: 1, '& .MuiInputBase-root': { height: 34, fontSize: '11px' } }}>
+                    <MenuItem value="" dense><Typography fontSize="11px">–</Typography></MenuItem>
+                    {lessonOptions.filter(l => lessonFrom === null || l >= lessonFrom).map(l => <MenuItem key={l} value={l} dense><Typography fontSize="11px">L{l}</Typography></MenuItem>)}
+                  </TextField>
+                </Box>
+              </Grid>
             </Grid>
           )}
 
-          <Typography variant="caption" color="text.secondary" mt={savedOnly ? 0 : 1.5} display="block">
-            📖 Reviewing: <strong>{getFilterSummary()}</strong>
+          <Typography fontSize="10px" color="text.secondary" mt={0.75} display="block">
+            Reviewing: <strong>{getFilterSummary()}</strong>
           </Typography>
         </CardContent>
       </Card>
 
+      {/* CARD COUNT + START */}
       {!isReadingMode(selectedMode) && (
-        <Card sx={{ mb: 2 }}>
-          <CardContent sx={{ py: isMobile ? 1.5 : 2, '&:last-child': { pb: isMobile ? 1.5 : 2 } }}>
-            <Typography fontWeight="bold" variant={isMobile ? 'body2' : 'body1'} mb={1.5}>🎴 Number of Cards</Typography>
-            <TextField value={cardCountInput} onChange={e => handleCardCountChange(e.target.value)}
-              size="small" type="number" inputProps={{ min: 1, max: 200 }}
-              error={!!cardCountError} helperText={cardCountError || 'Cards to review (1–200)'}
-              InputProps={{ endAdornment: <InputAdornment position="end">cards</InputAdornment> }}
-              sx={{ width: isMobile ? 150 : 180 }} />
-            <Box display="flex" gap={1} mt={1.5} flexWrap="wrap">
+        <Card sx={{ mb: 1.5 }} elevation={0} variant="outlined">
+          <CardContent sx={{ py: 1, px: 1.5, '&:last-child': { pb: 1 } }}>
+            <Typography fontWeight="bold" fontSize="12px" mb={0.75}>Cards</Typography>
+            <Box display="flex" gap={0.75} flexWrap="wrap" alignItems="center">
               {[10, 20, 30, 50, 100].map(n => (
                 <Chip key={n} label={n} size="small"
                   onClick={() => { setCardCountInput(String(n)); setCardCount(n); setCardCountError('') }}
                   variant={cardCount === n && !cardCountError ? 'filled' : 'outlined'}
                   sx={{
                     cursor: 'pointer',
+                    height: 24,
+                    fontSize: '11px',
                     backgroundColor: cardCount === n && !cardCountError ? '#1a3a5c' : 'transparent',
                     color: cardCount === n && !cardCountError ? 'white' : '#1a3a5c',
                     borderColor: '#1a3a5c',
                   }} />
               ))}
+              <TextField value={cardCountInput} onChange={e => handleCardCountChange(e.target.value)}
+                size="small" type="number" inputProps={{ min: 1, max: 200 }}
+                error={!!cardCountError}
+                sx={{ width: 70, '& .MuiInputBase-root': { height: 28, fontSize: '12px' } }} />
             </Box>
+            {cardCountError && <Typography fontSize="10px" color="error" mt={0.5}>{cardCountError}</Typography>}
           </CardContent>
         </Card>
       )}
 
-      <Button fullWidth variant="contained" size="large" disabled={startDisabled} onClick={handleStart}
-        sx={{ backgroundColor: '#1a3a5c', py: isMobile ? 1.2 : 1.5, fontSize: isMobile ? '14px' : '16px' }}>
-        🚀 Start Review
+      <Button fullWidth variant="contained" disabled={startDisabled} onClick={handleStart}
+        sx={{ backgroundColor: '#1a3a5c', py: 1, fontSize: '13px', fontWeight: 600, borderRadius: 2 }}>
+        Start Review
       </Button>
     </Box>
   )

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient'
 import {
   Box, Card, CardContent, Typography, TextField, MenuItem,
-  Button, IconButton, Divider, Grid, CircularProgress
+  Button, IconButton, Divider, Grid, CircularProgress, Checkbox
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import CloseIcon from '@mui/icons-material/Close'
@@ -10,25 +10,40 @@ import CloseIcon from '@mui/icons-material/Close'
 function AddVocabForm({ onSuccess }) {
   const [wordTypes, setWordTypes] = useState([])
   const [jlptLevels, setJlptLevels] = useState([])
+  const [books, setBooks] = useState([])
   const [loading, setLoading] = useState(false)
   const [word, setWord] = useState('')
   const [reading, setReading] = useState('')
   const [wordTypeId, setWordTypeId] = useState('')
   const [meaning, setMeaning] = useState('')
-  const [lessonNumber, setLessonNumber] = useState('')
   const [jlptLevelId, setJlptLevelId] = useState('')
+  const [bookAssignments, setBookAssignments] = useState([])
   const [examples, setExamples] = useState([{ japanese_sentence: '', english_translation: '' }])
   const [conjugations, setConjugations] = useState([{ form_type: '', conjugated_word: '' }])
 
   useEffect(() => { fetchReferenceData() }, [])
 
   async function fetchReferenceData() {
-    const [{ data: types }, { data: levels }] = await Promise.all([
+    const [{ data: types }, { data: levels }, { data: booksData }] = await Promise.all([
       supabase.from('word_types').select('*'),
-      supabase.from('jlpt_levels').select('*')
+      supabase.from('jlpt_levels').select('*'),
+      supabase.from('books').select('*, jlpt_levels(level)').order('id'),
     ])
     setWordTypes(types || [])
     setJlptLevels(levels || [])
+    setBooks(booksData || [])
+  }
+
+  function toggleBookAssignment(bookId) {
+    setBookAssignments(prev => {
+      const exists = prev.some(b => b.book_id === bookId)
+      return exists
+        ? prev.filter(b => b.book_id !== bookId)
+        : [...prev, { book_id: bookId, lesson_number: '' }]
+    })
+  }
+  function updateBookLesson(bookId, val) {
+    setBookAssignments(prev => prev.map(b => b.book_id === bookId ? { ...b, lesson_number: val } : b))
   }
 
   function addExample() { setExamples([...examples, { japanese_sentence: '', english_translation: '' }]) }
@@ -45,11 +60,18 @@ function AddVocabForm({ onSuccess }) {
     try {
       const { data: vocabData, error: vocabError } = await supabase
         .from('vocabulary')
-        .insert({ word, reading, word_type_id: wordTypeId || null, meaning, lesson_number: lessonNumber || null, jlpt_level_id: jlptLevelId || null })
+        .insert({ word, reading, word_type_id: wordTypeId || null, meaning, jlpt_level_id: jlptLevelId || null })
         .select().single()
       if (vocabError) throw vocabError
 
       const vocabId = vocabData.id
+      const validBookAssignments = bookAssignments.filter(b => b.book_id)
+      if (validBookAssignments.length > 0) {
+        const { error: bookError } = await supabase.from('vocabulary_books')
+          .insert(validBookAssignments.map(b => ({ vocab_id: vocabId, book_id: b.book_id, lesson_number: b.lesson_number || null })))
+        if (bookError) throw bookError
+      }
+
       const validExamples = examples.filter(e => e.japanese_sentence.trim())
       if (validExamples.length > 0) {
         const { error: exError } = await supabase.from('example_sentences')
@@ -65,7 +87,7 @@ function AddVocabForm({ onSuccess }) {
       }
 
       setWord(''); setReading(''); setWordTypeId(''); setMeaning('')
-      setLessonNumber(''); setJlptLevelId('')
+      setJlptLevelId(''); setBookAssignments([])
       setExamples([{ japanese_sentence: '', english_translation: '' }])
       setConjugations([{ form_type: '', conjugated_word: '' }])
       onSuccess()
@@ -111,7 +133,7 @@ function AddVocabForm({ onSuccess }) {
     {wordTypes.map(t => <MenuItem key={t.id} value={t.id}>{t.type_name}</MenuItem>)}
   </TextField>
 </Grid>
-<Grid item xs={4}>
+<Grid item xs={7}>
   <TextField
     fullWidth
     select
@@ -126,9 +148,30 @@ function AddVocabForm({ onSuccess }) {
     {jlptLevels.map(l => <MenuItem key={l.id} value={l.id}>{l.level}</MenuItem>)}
   </TextField>
 </Grid>
-<Grid item xs={3}>
-  <TextField fullWidth label="Lesson No." placeholder="28" type="number"
-    value={lessonNumber} onChange={e => setLessonNumber(e.target.value)} size="small" />
+<Grid item xs={12}>
+  <Typography variant="caption" fontWeight="bold" color="text.secondary" display="block" mb={0.5}>BOOK ASSIGNMENTS</Typography>
+  {books.map(book => {
+    const assignment = bookAssignments.find(b => b.book_id === book.id)
+    const isChecked = !!assignment
+    return (
+      <Box key={book.id} display="flex" alignItems="center" gap={1} mb={0.5}>
+        <Checkbox checked={isChecked} size="small"
+          onChange={() => toggleBookAssignment(book.id)}
+          sx={{ color: '#1a3a5c', '&.Mui-checked': { color: '#1a3a5c' }, p: 0.5 }} />
+        <Typography variant="body2" sx={{ flex: 1 }}>
+          {book.book_name}
+          <Typography component="span" variant="caption" color="text.disabled" ml={0.5}>
+            ({book.jlpt_levels?.level})
+          </Typography>
+        </Typography>
+        {isChecked && (
+          <TextField label="Lesson" type="number" value={assignment.lesson_number}
+            onChange={e => updateBookLesson(book.id, e.target.value)}
+            size="small" sx={{ width: 90 }} inputProps={{ min: 1 }} />
+        )}
+      </Box>
+    )
+  })}
 </Grid>
           </Grid>
         </CardContent>

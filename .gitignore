@@ -11,10 +11,6 @@ node_modules
 dist
 dist-ssr
 *.local
-.env
-*.zip
-node_modules/
-
 
 # Editor directories and files
 .vscode/*
@@ -26,5 +22,3 @@ node_modules/
 *.njsproj
 *.sln
 *.sw?
-
-.vercel

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient'
 import { getFilteredVocabIds } from '../utils/filterUtils'
 import { getSavedWordIds, toggleSavedWord, saveWord } from '../utils/savedWordsUtils'
+import { startSession, completeSession, logAttempt } from '../utils/statsService'
 import {
   Box, Card, CardContent, Typography, Button,
   LinearProgress, Chip, CircularProgress, IconButton,
@@ -24,10 +25,15 @@ function MultipleChoice({ activeFilter = {}, cardCount, onBack, userId = null })
   const [missedCards, setMissedCards] = useState([])
   const [savedIds, setSavedIds] = useState(new Set())
   const [savingIds, setSavingIds] = useState(new Set())
+  const [sessionId, setSessionId] = useState(null)
+  const [sessionStart] = useState(Date.now())
 
   useEffect(() => {
     fetchCards()
-    if (userId) getSavedWordIds(userId).then(setSavedIds)
+    if (userId) {
+      getSavedWordIds(userId).then(setSavedIds)
+      startSession(userId, 'multiple_choice', activeFilter).then(id => setSessionId(id))
+    }
   }, [])
 
   async function fetchCards() {
@@ -87,12 +93,23 @@ function MultipleChoice({ activeFilter = {}, cardCount, onBack, userId = null })
     const correct = choice.isCorrect
     setScore(s => ({ got: correct ? s.got + 1 : s.got, again: correct ? s.again : s.again + 1 }))
     if (!correct) setMissedCards(prev => [...prev, cards[current]])
+    // Log attempt
+    if (userId && sessionId && cards[current]) {
+      logAttempt(userId, sessionId, cards[current].id, 'multiple_choice', correct)
+    }
   }
 
   function handleNext() {
     if (current + 1 >= cards.length) setDone(true)
     else { setCurrent(c => c + 1); setSelected(null) }
   }
+
+  useEffect(() => {
+    if (done && userId && sessionId) {
+      const durationSeconds = Math.round((Date.now() - sessionStart) / 1000)
+      completeSession(sessionId, { total: cards.length, correct: score.got, wrong: score.again, durationSeconds })
+    }
+  }, [done])
 
   function handleRestart() {
     setCurrent(0); setSelected(null); setScore({ got: 0, again: 0 }); setDone(false); setMissedCards([])

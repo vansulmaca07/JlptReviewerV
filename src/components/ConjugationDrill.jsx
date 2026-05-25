@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient'
 import { getFilteredVocabIds } from '../utils/filterUtils'
+import { startSession, completeSession, logAttempt } from '../utils/statsService'
 import {
   Box, Card, CardContent, Typography, Button,
   LinearProgress, Chip, CircularProgress, TextField,
@@ -8,7 +9,7 @@ import {
 } from '@mui/material'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 
-function ConjugationDrill({ activeFilter = {}, cardCount, selectedForms, onBack }) {
+function ConjugationDrill({ activeFilter = {}, cardCount, selectedForms, onBack, userId = null }) {
   const theme = useTheme()
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'))
 
@@ -20,8 +21,13 @@ function ConjugationDrill({ activeFilter = {}, cardCount, selectedForms, onBack 
   const [isCorrect, setIsCorrect] = useState(false)
   const [score, setScore] = useState({ got: 0, again: 0 })
   const [done, setDone] = useState(false)
+  const [sessionId, setSessionId] = useState(null)
+  const [sessionStart] = useState(Date.now())
 
-  useEffect(() => { fetchCards() }, [])
+  useEffect(() => {
+    fetchCards()
+    if (userId) startSession(userId, 'conjugation', activeFilter).then(id => setSessionId(id))
+  }, [])
 
   async function fetchCards() {
     setLoading(true)
@@ -38,7 +44,7 @@ function ConjugationDrill({ activeFilter = {}, cardCount, selectedForms, onBack 
     ;(data || []).forEach(word => {
       word.conjugations?.filter(c => selectedForms.includes(c.form_type)).forEach(conj => {
         expanded.push({
-          word: word.word, reading: word.reading, meaning: word.meaning,
+          vocab_id: word.id, word: word.word, reading: word.reading, meaning: word.meaning,
           word_type: word.word_types?.type_name, jlpt_level: word.jlpt_levels?.level,
           lesson_number: word.lesson_number, conjugation: conj
         })
@@ -53,12 +59,23 @@ function ConjugationDrill({ activeFilter = {}, cardCount, selectedForms, onBack 
     const correct = answer.trim() === cards[current].conjugation.conjugated_word.trim()
     setIsCorrect(correct); setSubmitted(true)
     setScore(s => ({ got: correct ? s.got + 1 : s.got, again: correct ? s.again : s.again + 1 }))
+    // Log attempt
+    if (userId && sessionId && cards[current]?.vocab_id) {
+      logAttempt(userId, sessionId, cards[current].vocab_id, 'conjugation', correct)
+    }
   }
 
   function handleNext() {
     if (current + 1 >= cards.length) setDone(true)
     else { setCurrent(c => c + 1); setAnswer(''); setSubmitted(false); setIsCorrect(false) }
   }
+
+  useEffect(() => {
+    if (done && userId && sessionId) {
+      const durationSeconds = Math.round((Date.now() - sessionStart) / 1000)
+      completeSession(sessionId, { total: cards.length, correct: score.got, wrong: score.again, durationSeconds })
+    }
+  }, [done])
 
   function handleRestart() {
     setCurrent(0); setAnswer(''); setSubmitted(false); setIsCorrect(false)

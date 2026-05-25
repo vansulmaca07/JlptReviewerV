@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient'
 import { getFilteredVocabIds } from '../utils/filterUtils'
 import { getSavedWordIds, toggleSavedWord, saveWord } from '../utils/savedWordsUtils'
+import { startSession, completeSession, logAttempt } from '../utils/statsService'
 import {
   Box, Card, CardContent, Typography, Button,
   LinearProgress, Chip, CircularProgress, IconButton, Tooltip,
@@ -36,10 +37,15 @@ function FlashcardMode({ activeFilter = {}, cardCount, onBack, preloadedCards = 
   const [reviewingMissed, setReviewingMissed] = useState(false)
   const [savedIds, setSavedIds] = useState(new Set())
   const [savingIds, setSavingIds] = useState(new Set())
+  const [sessionId, setSessionId] = useState(null)
+  const [sessionStart] = useState(Date.now())
 
   useEffect(() => {
     fetchCards()
-    if (userId) getSavedWordIds(userId).then(setSavedIds)
+    if (userId) {
+      getSavedWordIds(userId).then(setSavedIds)
+      startSession(userId, 'flashcard', activeFilter).then(id => setSessionId(id))
+    }
   }, [])
 
   async function fetchCards() {
@@ -91,6 +97,10 @@ function FlashcardMode({ activeFilter = {}, cardCount, onBack, preloadedCards = 
 
   function handleAnswer(correct) {
     setScore(s => ({ got: correct ? s.got + 1 : s.got, again: correct ? s.again : s.again + 1 }))
+    // Log attempt
+    if (userId && sessionId && current) {
+      logAttempt(userId, sessionId, current.id, 'flashcard', correct)
+    }
     let newQueue = [...queue]
     if (!correct) {
       setMissedCards(prev => new Set(prev).add(current.id))
@@ -101,6 +111,13 @@ function FlashcardMode({ activeFilter = {}, cardCount, onBack, preloadedCards = 
     if (newQueue.length === 0) { setDone(true) }
     else { setCurrent(newQueue[0]); setQueue(newQueue.slice(1)); setReviewed(r => r + 1); setFlipped(false) }
   }
+
+  useEffect(() => {
+    if (done && userId && sessionId) {
+      const durationSeconds = Math.round((Date.now() - sessionStart) / 1000)
+      completeSession(sessionId, { total: cards.length, correct: score.got, wrong: score.again, durationSeconds })
+    }
+  }, [done])
 
   function handleRestart() {
     const reshuffled = [...cards].sort(() => Math.random() - 0.5)
